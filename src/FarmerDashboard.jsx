@@ -11,7 +11,7 @@ import {
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 
-const API = "http://localhost:5000";
+const API = "https://farm-to-family.onrender.com";
 
 export default function FarmerDashboard() {
   const navigate = useNavigate();
