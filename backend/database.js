@@ -1,7 +1,9 @@
 
 import sqlite3 from "sqlite3";
 
-const db = new sqlite3.Database("./farm-to-family.db", (err) => {
+const db = new sqlite3.Database(
+  process.env.DB_PATH || "./farm-to-family.db",
+  (err) => { 
   if (err) {
     console.error("Database error:", err.message);
   } else {
