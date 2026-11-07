@@ -84,6 +84,7 @@ db.run(`
     district TEXT NOT NULL,
     pincode TEXT NOT NULL,
     total_amount REAL NOT NULL,
+    customer_id INTEGER,
     status TEXT DEFAULT 'Pending',
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   )
