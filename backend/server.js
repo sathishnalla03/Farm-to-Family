@@ -10,9 +10,14 @@ dotenv.config();
 
 const app = express();
 
-app.use(cors({
-  origin: "http://localhost:5173"
-}));
+app.use(
+  cors({
+    origin: [
+      "http://localhost:5173",
+      "https://farm-to-family-gray.vercel.app"
+    ]
+  })
+);
 
 app.use(express.json());
 
