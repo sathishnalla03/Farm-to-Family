@@ -13,14 +13,19 @@ function Payment() {
   const navigate = useNavigate();
   const location = useLocation();
 
+  const t = (english, telugu) => {
+    const language = localStorage.getItem("language") || "en";
+    return language === "te" ? telugu : english;
+  };
+
   const cart = location.state?.cart || [];
   const customer = location.state?.customer || null;
 
   const [paymentMethod, setPaymentMethod] = useState("upi");
-const [processing, setProcessing] = useState(false);
-const [success, setSuccess] = useState(false);
-const [orderData, setOrderData] = useState(null);
-const [paymentError, setPaymentError] = useState("");
+  const [processing, setProcessing] = useState(false);
+  const [success, setSuccess] = useState(false);
+  const [orderData, setOrderData] = useState(null);
+  const [paymentError, setPaymentError] = useState("");
 
   // Calculate total using your existing cart structure
   const totalAmount = cart.reduce(
@@ -31,6 +36,7 @@ const [paymentError, setPaymentError] = useState("");
   );
 
   const handlePayment = async () => {
+
   if (!cart.length || !customer) {
     alert(t("Order information is missing.", "ఆర్డర్ సమాచారం అందుబాటులో లేదు."));
     navigate("/");
@@ -89,6 +95,18 @@ const [paymentError, setPaymentError] = useState("");
   } finally {
     setProcessing(false);
   }
+};
+
+const getPaymentMethodText = () => {
+  if (paymentMethod === "upi") {
+    return t("UPI", "UPI");
+  }
+
+  if (paymentMethod === "card") {
+    return t("Debit / Credit Card", "డెబిట్ / క్రెడిట్ కార్డ్");
+  }
+
+  return t("Cash on Delivery", "క్యాష్ ఆన్ డెలివరీ");
 };
 
   const continueAfterPayment = () => {
