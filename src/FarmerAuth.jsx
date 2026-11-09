@@ -41,8 +41,8 @@ async function submit(event) {
 
   try {
     const endpoint = mode === "register"
-      ? "https://farm-to-family.onrender.com/api/farmers/register"
-      : "https://farm-to-family.onrender.com/api/farmers/login";
+  ? "http://localhost:5000/api/farmers/register"
+  : "http://localhost:5000/api/farmers/login";
 
     const response = await fetch(endpoint, {
       method: "POST",

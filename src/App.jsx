@@ -93,7 +93,7 @@ function TrackOrder() {
 
     try {
       const response = await fetch(
-        `https://farm-to-family.onrender.com/api/orders/${selectedOrderId}?phone=${selectedPhone}`
+        `http://localhost:5000/api/orders/${selectedOrderId}?phone=${selectedPhone}`
       );
 
       const data = await response.json();
@@ -126,7 +126,7 @@ function TrackOrder() {
 
     try {
       const response = await fetch(
-        `https://farm-to-family.onrender.com/api/orders/${orderId}?phone=${phone}`
+        `http://localhost:5000/api/orders/${orderId}?phone=${phone}`
       );
 
       const data = await response.json();
@@ -471,7 +471,7 @@ const [customer, setCustomer] = useState({
   // Fetch products from backend
   useEffect(() => {
 
-    fetch("https://farm-to-family.onrender.com/api/products")
+    fetch("http://localhost:5000/api/products")
       .then(response => {
         if (!response.ok) {
           throw new Error("Unable to fetch products");
@@ -670,7 +670,7 @@ const placeOrder = async (e) => {
   setCheckoutError("");
 
   try {
-    const response = await fetch("https://farm-to-family.onrender.com/api/orders", {
+    const response = await fetch("http://localhost:5000/api/orders", {
       method: "POST",
       headers: {
   "Content-Type": "application/json",
@@ -697,7 +697,7 @@ const placeOrder = async (e) => {
 
     // Refresh product stock from the backend
     const productsResponse = await fetch(
-      "https://farm-to-family.onrender.com/api/products"
+      "http://localhost:5000/api/products"
     );
 
     if (productsResponse.ok) {

@@ -57,7 +57,7 @@ function CustomerDashboard() {
       setError("");
 
       const response = await fetch(
-        "https://farm-to-family.onrender.com/api/customers/orders",
+        "http://localhost:5000/api/customers/orders",
         {
           headers: {
             Authorization: `Bearer ${token}`

@@ -22,3 +22,9 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Farm to Family backend
+backend/node_modules/
+backend/.env
+*.db
+backend/*.db

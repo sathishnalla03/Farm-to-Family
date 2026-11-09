@@ -1,10 +1,9 @@
-
 import express from "express";
 import cors from "cors";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import dotenv from "dotenv";
-import db from "./database.js";
+import db, { pool } from "./database.js";
 
 dotenv.config();
 
@@ -530,7 +529,7 @@ app.get("/api/products", (req, res) => {
       f.name AS farmer,
       f.village,
       f.district,
-      f.village || ', ' || f.district AS location
+      CONCAT(f.village, ', ', f.district) AS location
     FROM products p
     JOIN farmers f ON p.farmer_id = f.id
     WHERE p.status = 'active'
@@ -642,274 +641,302 @@ app.get(
 
 // CUSTOMER PLACE ORDER API
 
-app.post("/api/orders", authenticateCustomer, (req, res) => {
+app.post("/api/orders", authenticateCustomer, async (req, res) => {
+  let connection;
 
-  const {
-    customer_name,
-    customer_phone,
-    delivery_address,
-    village,
-    district,
-    pincode,
-    items
-  } = req.body;
+  try {
+    const {
+      customer_name,
+      customer_phone,
+      delivery_address,
+      village,
+      district,
+      pincode,
+      items
+    } = req.body;
 
-  // Validate customer details
-  if (
-    !customer_name?.trim() ||
-    !customer_phone ||
-    !delivery_address?.trim() ||
-    !village?.trim() ||
-    !district?.trim() ||
-    !pincode
-  ) {
-    return res.status(400).json({
-      message: "Please fill in all customer and delivery details"
-    });
-  }
-
-  if (!/^[6-9]\d{9}$/.test(customer_phone)) {
-    return res.status(400).json({
-      message: "Enter a valid 10-digit mobile number"
-    });
-  }
-
-  if (!/^\d{6}$/.test(String(pincode))) {
-    return res.status(400).json({
-      message: "Enter a valid 6-digit pincode"
-    });
-  }
-
-  if (!Array.isArray(items) || items.length === 0) {
-    return res.status(400).json({
-      message: "Your order must contain at least one product"
-    });
-  }
-
-  // Validate and combine duplicate product IDs
-  const itemMap = new Map();
-
-  for (const item of items) {
-    const productId = Number(item.productId);
-    const quantity = Number(item.quantity);
-
+    // -----------------------------
+    // Validate customer details
+    // -----------------------------
     if (
-      !Number.isInteger(productId) ||
-      productId <= 0 ||
-      !Number.isFinite(quantity) ||
-      quantity <= 0 ||
-      quantity > 100000
+      !customer_name?.trim() ||
+      !customer_phone ||
+      !delivery_address?.trim() ||
+      !village?.trim() ||
+      !district?.trim() ||
+      !pincode
     ) {
       return res.status(400).json({
-        message: "Invalid product or quantity"
+        message: "Please fill in all customer and delivery details"
       });
     }
 
-    itemMap.set(
-      productId,
-      (itemMap.get(productId) || 0) + quantity
+    if (!/^[6-9]\d{9}$/.test(customer_phone)) {
+      return res.status(400).json({
+        message: "Enter a valid 10-digit mobile number"
+      });
+    }
+
+    if (!/^\d{6}$/.test(String(pincode))) {
+      return res.status(400).json({
+        message: "Enter a valid 6-digit pincode"
+      });
+    }
+
+    if (!Array.isArray(items) || items.length === 0) {
+      return res.status(400).json({
+        message: "Your order must contain at least one product"
+      });
+    }
+
+    // -----------------------------
+    // Validate and combine items
+    // -----------------------------
+    const itemMap = new Map();
+
+    for (const item of items) {
+      const productId = Number(item.productId);
+      const quantity = Number(item.quantity);
+
+      if (
+        !Number.isInteger(productId) ||
+        productId <= 0 ||
+        !Number.isFinite(quantity) ||
+        quantity <= 0 ||
+        quantity > 100000
+      ) {
+        return res.status(400).json({
+          message: "Invalid product or quantity"
+        });
+      }
+
+      itemMap.set(
+        productId,
+        (itemMap.get(productId) || 0) + quantity
+      );
+    }
+
+    const orderItems = Array.from(
+      itemMap,
+      ([productId, quantity]) => ({
+        productId,
+        quantity
+      })
     );
-  }
 
-  const orderItems = Array.from(itemMap, ([productId, quantity]) => ({
-    productId,
-    quantity
-  }));
+    // -----------------------------
+    // Get MySQL connection
+    // -----------------------------
+    console.log("ORDER: Getting MySQL connection...");
 
-  // Start database transaction
-  db.run("BEGIN IMMEDIATE TRANSACTION", (beginError) => {
+    connection = await pool.getConnection();
 
-    if (beginError) {
-      console.error("Transaction error:", beginError);
+    console.log("ORDER: MySQL connection acquired");
 
-      return res.status(500).json({
-        message: "Unable to start order"
-      });
-    }
+    // -----------------------------
+    // Start real MySQL transaction
+    // -----------------------------
+    await connection.beginTransaction();
 
-    // Roll back if anything goes wrong
-    const failOrder = (status, message) => {
-      db.run("ROLLBACK", () => {
-        res.status(status).json({ message });
-      });
-    };
+    console.log("ORDER: Transaction started");
 
     const selectedProducts = [];
 
-    // Fetch and verify every product
-    const checkProduct = (index) => {
-
-      if (index >= orderItems.length) {
-        saveOrder();
-        return;
-      }
-
-      const item = orderItems[index];
-
-      db.get(
-        `SELECT id, farmer_id, rice_name, price_per_kg, stock_kg
+    // -----------------------------
+    // Verify products and stock
+    // -----------------------------
+    for (const item of orderItems) {
+      const [rows] = await connection.execute(
+        `SELECT
+          id,
+          farmer_id,
+          rice_name,
+          price_per_kg,
+          stock_kg
          FROM products
-         WHERE id = ?`,
-        [item.productId],
-        (error, product) => {
-
-          if (error) {
-            console.error(error);
-            return failOrder(500, "Unable to verify products");
-          }
-
-          if (!product) {
-            return failOrder(404, "A selected rice product was not found");
-          }
-
-          if (Number(product.stock_kg) < item.quantity) {
-            return failOrder(
-              400,
-              `Insufficient stock for ${product.rice_name}. Available: ${product.stock_kg} kg`
-            );
-          }
-
-          selectedProducts.push({
-            ...product,
-            quantity: item.quantity,
-            subtotal: Number(product.price_per_kg) * item.quantity
-          });
-
-          checkProduct(index + 1);
-
-        }
+         WHERE id = ?
+         FOR UPDATE`,
+        [item.productId]
       );
 
-    };
+      if (rows.length === 0) {
+        await connection.rollback();
 
-    // Save customer order
-    const saveOrder = () => {
+        return res.status(404).json({
+          message: "A selected rice product was not found"
+        });
+      }
 
-      const totalAmount = Number(
-        selectedProducts.reduce(
+      const product = rows[0];
+
+      if (Number(product.stock_kg) < item.quantity) {
+        await connection.rollback();
+
+        return res.status(400).json({
+          message:
+            `Insufficient stock for ${product.rice_name}. ` +
+            `Available: ${product.stock_kg} kg`
+        });
+      }
+
+      selectedProducts.push({
+        ...product,
+        quantity: item.quantity,
+        subtotal:
+          Number(product.price_per_kg) * item.quantity
+      });
+    }
+
+    // -----------------------------
+    // Calculate total
+    // -----------------------------
+    const totalAmount = Number(
+      selectedProducts
+        .reduce(
           (total, item) => total + item.subtotal,
           0
-        ).toFixed(2)
-      );
+        )
+        .toFixed(2)
+    );
 
-      db.run(
-  `INSERT INTO orders
-  (customer_id, customer_name, customer_phone, delivery_address,
-   village, district, pincode, total_amount)
-   VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-  [
-    req.customerId,
-    customer_name.trim(),
-    customer_phone,
-    delivery_address.trim(),
-    village.trim(),
-    district.trim(),
-    String(pincode),
-    totalAmount
-  ],
-        function (error) {
+    console.log("ORDER: Total amount:", totalAmount);
 
-          if (error) {
-            console.error(error);
-            return failOrder(500, "Unable to save your order");
-          }
+    // -----------------------------
+    // Create order
+    // -----------------------------
+    const [orderResult] = await connection.execute(
+      `INSERT INTO orders
+      (
+        customer_id,
+        customer_name,
+        customer_phone,
+        delivery_address,
+        village,
+        district,
+        pincode,
+        total_amount
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        req.customerId,
+        customer_name.trim(),
+        customer_phone,
+        delivery_address.trim(),
+        village.trim(),
+        district.trim(),
+        String(pincode),
+        totalAmount
+      ]
+    );
 
-          const orderId = this.lastID;
+    const orderId = orderResult.insertId;
 
-          // Save each order item and reduce product stock
-          saveOrderItem(0, orderId, totalAmount);
+    console.log("ORDER: Order created:", orderId);
 
-        }
-      );
+    // -----------------------------
+    // Save order items + update stock
+    // -----------------------------
+    for (const item of selectedProducts) {
 
-    };
-
-    // Process order items one by one
-    const saveOrderItem = (index, orderId, totalAmount) => {
-
-      if (index >= selectedProducts.length) {
-
-        db.run("COMMIT", (error) => {
-
-          if (error) {
-            console.error(error);
-            return failOrder(500, "Unable to complete your order");
-          }
-
-          return res.status(201).json({
-            message: "Order placed successfully!",
-            orderId,
-            totalAmount,
-            status: "Pending"
-          });
-
-        });
-
-        return;
-      }
-
-      const item = selectedProducts[index];
-
-      // Reduce available stock safely
-      db.run(
+      // Reduce stock
+      const [updateResult] = await connection.execute(
         `UPDATE products
          SET stock_kg = stock_kg - ?
-         WHERE id = ? AND stock_kg >= ?`,
+         WHERE id = ?
+         AND stock_kg >= ?`,
         [
           item.quantity,
           item.id,
           item.quantity
-        ],
-        function (error) {
-
-          if (error) {
-            console.error(error);
-            return failOrder(500, "Unable to update rice stock");
-          }
-
-          if (this.changes !== 1) {
-            return failOrder(
-              400,
-              `Insufficient stock for ${item.rice_name}`
-            );
-          }
-
-          // Save product details in order_items
-          db.run(
-            `INSERT INTO order_items
-            (order_id, product_id, farmer_id, rice_name,
-             price_per_kg, quantity_kg, subtotal)
-             VALUES (?, ?, ?, ?, ?, ?, ?)`,
-            [
-              orderId,
-              item.id,
-              item.farmer_id,
-              item.rice_name,
-              item.price_per_kg,
-              item.quantity,
-              item.subtotal
-            ],
-            (error) => {
-
-              if (error) {
-                console.error(error);
-                return failOrder(500, "Unable to save order items");
-              }
-
-              saveOrderItem(index + 1, orderId, totalAmount);
-
-            }
-          );
-
-        }
+        ]
       );
 
-    };
+      if (updateResult.affectedRows !== 1) {
+        await connection.rollback();
 
-    checkProduct(0);
+        return res.status(400).json({
+          message:
+            `Insufficient stock for ${item.rice_name}`
+        });
+      }
 
-  });
+      // Save order item
+      await connection.execute(
+        `INSERT INTO order_items
+        (
+          order_id,
+          product_id,
+          farmer_id,
+          rice_name,
+          price_per_kg,
+          quantity_kg,
+          subtotal
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        [
+          orderId,
+          item.id,
+          item.farmer_id,
+          item.rice_name,
+          item.price_per_kg,
+          item.quantity,
+          item.subtotal
+        ]
+      );
 
+      console.log(
+        `ORDER: Saved item ${item.rice_name}`
+      );
+    }
+
+    // -----------------------------
+    // Commit transaction
+    // -----------------------------
+    await connection.commit();
+
+    console.log(
+      "ORDER: Transaction committed successfully"
+    );
+
+    return res.status(201).json({
+      message: "Order placed successfully!",
+      orderId,
+      totalAmount,
+      status: "Pending"
+    });
+
+  } catch (error) {
+
+    console.error("ORDER ERROR:", error);
+
+    // Rollback if transaction was started
+    if (connection) {
+      try {
+        await connection.rollback();
+        console.log("ORDER: Transaction rolled back");
+      } catch (rollbackError) {
+        console.error(
+          "ORDER ROLLBACK ERROR:",
+          rollbackError
+        );
+      }
+    }
+
+    return res.status(500).json({
+      message: "Unable to place order",
+      error:
+        process.env.NODE_ENV === "development"
+          ? error.message
+          : undefined
+    });
+
+  } finally {
+
+    if (connection) {
+      connection.release();
+      console.log("ORDER: MySQL connection released");
+    }
+  }
 });
 
 // Update order status for the logged-in farmer
@@ -962,13 +989,10 @@ app.put(
         }
 
         db.run(
-          `UPDATE orders
-           SET status = ?
-           WHERE id = (
-             SELECT order_id
-             FROM order_items
-             WHERE id = ?
-           )`,
+          `UPDATE orders o
+          JOIN order_items oi ON o.id = oi.order_id
+          SET o.status = ?
+          WHERE oi.id = ?`,
           [status, orderItemId],
           function (updateError) {
 
