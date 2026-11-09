@@ -40,8 +40,8 @@ function CustomerAuth() {
 
     try {
       const endpoint = isLogin
-        ? "http://localhost:5000/api/customers/login"
-        : "http://localhost:5000/api/customers/register";
+        ? "https://farm-to-family.onrender.com/api/customers/login"
+        : "https://farm-to-family.onrender.com/api/customers/register";
 
       const body = isLogin
         ? {
